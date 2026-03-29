@@ -82,19 +82,20 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 
 func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
 	var (
-		name       string
-		topicID    string
-		logType    string
-		logPath    string
+		name        string
+		topicID     string
+		logsetID    string
+		logType     string
+		logPath     string
 		filePattern string
-		groupID    string
-		parseProto string
-		separator  string
-		keys       string
-		regex      string
-		timeKey    string
-		timeFormat string
-		filterKeys string
+		groupID     string
+		parseProto  string
+		separator   string
+		keys        string
+		regex       string
+		timeKey     string
+		timeFormat  string
+		filterKeys  string
 		filterRegex string
 	)
 
@@ -115,6 +116,7 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
   cls-cli collector +create \
     --name "app-json-logs" \
     --topic <topic_id> \
+    --logset <logset_id> \
     --type json \
     --path "/var/log/app" \
     --file-pattern "*.log" \
@@ -124,6 +126,7 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
   cls-cli collector +create \
     --name "nginx-access" \
     --topic <topic_id> \
+    --logset <logset_id> \
     --type separator \
     --path "/var/log/nginx" \
     --file-pattern "access.log*" \
@@ -135,6 +138,7 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
   cls-cli collector +create \
     --name "app-regex" \
     --topic <topic_id> \
+    --logset <logset_id> \
     --type fullregex \
     --path "/var/log/app" \
     --file-pattern "*.log" \
@@ -146,6 +150,7 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
   cls-cli collector +create \
     --name "simple-logs" \
     --topic <topic_id> \
+    --logset <logset_id> \
     --type fulltext \
     --path "/var/log/app" \
     --file-pattern "*.log" \
@@ -164,25 +169,46 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
 				return fmt.Errorf("--group-id 参数必填")
 			}
 
-			params := map[string]interface{}{
-				"Name":    name,
-				"TopicId": topicID,
-				"Type":    "cls_rule",
-				"LogType": logType,
-				"ConfigFlag": "loglistener",
-				"LogFormat": logType,
-				"Path":    logPath,
+			// 如果未指定 logset，自动通过 topic 查询
+			if logsetID == "" && !f.DryRun {
+				clsClient, err := f.CLSClient()
+				if err != nil {
+					return err
+				}
+				topicResult, err := clsClient.Call("DescribeTopics", map[string]interface{}{
+					"Filters": []map[string]interface{}{
+						{"Key": "topicId", "Values": []string{topicID}},
+					},
+				})
+				if err == nil {
+					if resp, ok := topicResult["Response"].(map[string]interface{}); ok {
+						if topics, ok := resp["Topics"].([]interface{}); ok && len(topics) > 0 {
+							if t, ok := topics[0].(map[string]interface{}); ok {
+								if lid, ok := t["LogsetId"].(string); ok {
+									logsetID = lid
+								}
+							}
+						}
+					}
+				}
+				if logsetID == "" {
+					return fmt.Errorf("无法自动获取 LogsetId，请通过 --logset 参数手动指定")
+				}
 			}
 
-			if filePattern != "" {
-				params["FilePattern"] = filePattern
+			// 构建 HostFile 采集路径
+			hostFile := map[string]interface{}{
+				"LogPath":     logPath,
+				"FilePattern": filePattern,
 			}
 
-			// 绑定机器组
-			params["ExcludePaths"] = []interface{}{}
-			params["Output"] = topicID
+			// 构建 CollectInfos
+			collectInfo := map[string]interface{}{
+				"Type": "host_file",
+				"HostFile": hostFile,
+			}
 
-			// 提取规则
+			// 构建提取规则
 			extractRule := map[string]interface{}{}
 
 			switch logType {
@@ -236,7 +262,20 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
 				extractRule["ParseProtocol"] = parseProto
 			}
 
-			params["ExtractRule"] = extractRule
+			// 构建完整请求参数，对齐 CreateConfigExtra API 规范
+			params := map[string]interface{}{
+				"Name":         name,
+				"TopicId":      topicID,
+				"LogsetId":     logsetID,
+				"Type":         "host_file",
+				"LogType":      logType,
+				"LogFormat":    logType,
+				"ConfigFlag":   "label_k8s",
+				"GroupIds":     []string{groupID},
+				"CollectInfos": []interface{}{collectInfo},
+				"ExtractRule":  extractRule,
+				"ExcludePaths": []interface{}{},
+			}
 
 			if f.DryRun {
 				b, _ := json.MarshalIndent(params, "", "  ")
@@ -249,26 +288,14 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
 				return err
 			}
 
-			// 先绑定机器组
 			result, err := clsClient.Call("CreateConfigExtra", params)
 			if err != nil {
 				return err
 			}
 
-			// 获取配置ID，然后绑定机器组
 			if resp, ok := result["Response"].(map[string]interface{}); ok {
 				if configExtraID, ok := resp["ConfigExtraId"].(string); ok {
-					// 绑定机器组到配置
-					_, bindErr := clsClient.Call("ApplyConfigToMachineGroup", map[string]interface{}{
-						"ConfigId": configExtraID,
-						"GroupId":  groupID,
-					})
-					if bindErr != nil {
-						fmt.Fprintf(f.IOStreams.ErrOut, "警告: 采集配置创建成功但绑定机器组失败: %s\n", bindErr)
-						fmt.Fprintf(f.IOStreams.ErrOut, "请手动绑定: cls-cli api ApplyConfigToMachineGroup --payload '{\"ConfigId\":\"%s\",\"GroupId\":\"%s\"}'\n", configExtraID, groupID)
-					} else {
-						output.PrintSuccess(fmt.Sprintf("采集配置 '%s' 创建成功并已绑定机器组 %s", name, groupID))
-					}
+					output.PrintSuccess(fmt.Sprintf("采集配置 '%s' 创建成功（ID: %s），已绑定机器组 %s", name, configExtraID, groupID))
 				}
 			}
 
@@ -279,6 +306,7 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
 
 	cmd.Flags().StringVar(&name, "name", "", "采集配置名称（必填）")
 	cmd.Flags().StringVar(&topicID, "topic", "", "投递的日志主题 ID（必填）")
+	cmd.Flags().StringVar(&logsetID, "logset", "", "日志集 ID（可选，不填则自动从 topic 查询）")
 	cmd.Flags().StringVar(&logType, "type", "fulltext", "日志类型: fulltext, json, separator, fullregex, multiline")
 	cmd.Flags().StringVar(&logPath, "path", "", "采集日志路径（必填），如 /var/log/app")
 	cmd.Flags().StringVar(&filePattern, "file-pattern", "*.log", "文件名匹配模式")

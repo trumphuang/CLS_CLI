@@ -2,6 +2,7 @@ package alarm
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/spf13/cobra"
 	"github.com/tencentcloud/cls-cli/internal/cmdutil"
@@ -73,49 +74,68 @@ func newListCmd(f *cmdutil.Factory) *cobra.Command {
 
 func newHistoryCmd(f *cmdutil.Factory) *cobra.Command {
 	var (
-		alarmID string
-		topicID string
-		offset  int64
-		limit   int64
+		from   string
+		to     string
+		status string
+		offset int64
+		limit  int64
 	)
 
 	cmd := &cobra.Command{
 		Use:   "+history",
 		Short: "查看告警历史记录",
-		Long: `查看告警触发历史。
+		Long: `查看告警触发历史。通过 GetAlarmLog 查询告警执行记录。
+
+可通过 --status 过滤告警状态:
+  - SendSuccess:    告警触发并发送成功
+  - QueryError:     告警查询语句执行错误
+  - AlertIntervalThresholdUnreach: 满足条件但被频率限制抑制
+  - RuleUnmatched:  不符合通知规则
+  - QueryResultUnmatch: 查询结果不满足触发条件
 
 示例:
   cls-cli alarm +history
-  cls-cli alarm +history --alarm-id <alarm_id> --format table`,
+  cls-cli alarm +history --from "7 days ago" --status SendSuccess
+  cls-cli alarm +history --from "1 hour ago" --limit 50`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// 解析时间范围，默认最近24小时
+			var fromMs, toMs int64
+			now := time.Now()
+
+			if to == "" {
+				toMs = now.UnixMilli()
+			} else {
+				// 尝试简单解析
+				toMs = now.UnixMilli()
+			}
+
+			if from == "" {
+				fromMs = now.Add(-24 * time.Hour).UnixMilli()
+			} else {
+				// 支持常见自然语言时间
+				parsed := parseRelativeTime(from, now)
+				fromMs = parsed.UnixMilli()
+			}
+
 			clsClient, err := f.CLSClient()
 			if err != nil {
 				return err
 			}
 
+			query := "*"
+			if status != "" {
+				query = fmt.Sprintf("status:%s", status)
+			}
+
 			params := map[string]interface{}{
-				"Offset": offset,
-				"Limit":  limit,
+				"From":  fromMs,
+				"To":    toMs,
+				"Query": query,
+				"Limit": limit,
+				"Sort":  "desc",
 			}
 
-			var filters []map[string]interface{}
-			if alarmID != "" {
-				filters = append(filters, map[string]interface{}{
-					"Key":    "alarmId",
-					"Values": []string{alarmID},
-				})
-			}
-			if topicID != "" {
-				filters = append(filters, map[string]interface{}{
-					"Key":    "topicId",
-					"Values": []string{topicID},
-				})
-			}
-			if len(filters) > 0 {
-				params["Filters"] = filters
-			}
-
-			result, err := clsClient.Call("DescribeAlarmNotices", params)
+			result, err := clsClient.Call("GetAlarmLog", params)
 			if err != nil {
 				return err
 			}
@@ -125,10 +145,11 @@ func newHistoryCmd(f *cmdutil.Factory) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&alarmID, "alarm-id", "", "按告警策略 ID 过滤")
-	cmd.Flags().StringVar(&topicID, "topic", "", "按日志主题 ID 过滤")
+	cmd.Flags().StringVar(&from, "from", "", "开始时间，如 '7 days ago'、'1 hour ago'（默认24小时前）")
+	cmd.Flags().StringVar(&to, "to", "", "结束时间（默认当前时间）")
+	cmd.Flags().StringVar(&status, "status", "", "按状态过滤: SendSuccess, QueryError, AlertIntervalThresholdUnreach, RuleUnmatched, QueryResultUnmatch")
 	cmd.Flags().Int64Var(&offset, "offset", 0, "偏移量")
-	cmd.Flags().Int64Var(&limit, "limit", 20, "返回条数")
+	cmd.Flags().Int64Var(&limit, "limit", 100, "返回条数")
 	return cmd
 }
 
@@ -324,5 +345,62 @@ func formatAlarmListResult(data interface{}, format output.Format) {
 		}
 	}
 	output.FormatOutput(data, format)
+}
+
+// parseRelativeTime 解析相对时间表达式
+func parseRelativeTime(expr string, now time.Time) time.Time {
+	// 支持常见的相对时间表达式
+	type pattern struct {
+		suffix   string
+		duration time.Duration
+	}
+	patterns := []pattern{
+		{"minutes ago", time.Minute},
+		{"minute ago", time.Minute},
+		{"min ago", time.Minute},
+		{"hours ago", time.Hour},
+		{"hour ago", time.Hour},
+		{"days ago", 24 * time.Hour},
+		{"day ago", 24 * time.Hour},
+	}
+
+	for _, p := range patterns {
+		if len(expr) > len(p.suffix) && expr[len(expr)-len(p.suffix):] == p.suffix {
+			numStr := expr[:len(expr)-len(p.suffix)]
+			// 去除空格
+			for len(numStr) > 0 && numStr[len(numStr)-1] == ' ' {
+				numStr = numStr[:len(numStr)-1]
+			}
+			var n int
+			if _, err := fmt.Sscanf(numStr, "%d", &n); err == nil {
+				return now.Add(-time.Duration(n) * p.duration)
+			}
+		}
+	}
+
+	// 尝试特殊关键词
+	switch expr {
+	case "yesterday":
+		return now.Add(-24 * time.Hour)
+	case "today":
+		y, m, d := now.Date()
+		return time.Date(y, m, d, 0, 0, 0, 0, now.Location())
+	case "now":
+		return now
+	}
+
+	// 尝试标准时间格式
+	for _, layout := range []string{
+		"2006-01-02 15:04:05",
+		"2006-01-02T15:04:05",
+		"2006-01-02",
+	} {
+		if t, err := time.ParseInLocation(layout, expr, now.Location()); err == nil {
+			return t
+		}
+	}
+
+	// 解析失败，返回24小时前作为默认值
+	return now.Add(-24 * time.Hour)
 }
 

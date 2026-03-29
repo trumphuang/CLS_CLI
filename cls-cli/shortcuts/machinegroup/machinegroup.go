@@ -94,12 +94,12 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
 				return fmt.Errorf("--values 参数必填")
 			}
 
-			var typeInt int
+			var typeStr string
 			switch strings.ToLower(mgType) {
 			case "ip":
-				typeInt = 0
+				typeStr = "ip"
 			case "label":
-				typeInt = 1
+				typeStr = "label"
 			default:
 				return fmt.Errorf("--type 必须是 ip 或 label")
 			}
@@ -112,7 +112,7 @@ func newCreateCmd(f *cmdutil.Factory) *cobra.Command {
 			params := map[string]interface{}{
 				"GroupName": name,
 				"MachineGroupType": map[string]interface{}{
-					"Type":   typeInt,
+					"Type":   typeStr,
 					"Values": valueList,
 				},
 			}

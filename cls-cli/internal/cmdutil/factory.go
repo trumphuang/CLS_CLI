@@ -20,12 +20,13 @@ type IOStreams struct {
 }
 
 type Factory struct {
-	Config    func() (*core.CliConfig, error)
-	CLSClient func() (*client.APIClient, error)
-	IOStreams  *IOStreams
-	Format    output.Format
-	DryRun    bool
-	ForceYes  bool // --yes 跳过删除等危险操作的二次确认
+	Config         func() (*core.CliConfig, error)
+	CLSClient      func() (*client.APIClient, error)
+	IOStreams       *IOStreams
+	Format         output.Format
+	DryRun         bool
+	ForceYes       bool   // --yes 跳过删除等危险操作的二次确认
+	RegionOverride string // --region 全局参数，优先级最高
 }
 
 // ConfirmAction 对危险操作进行二次确认，返回 true 表示用户确认执行。
@@ -64,6 +65,10 @@ func NewDefault() *Factory {
 		return cfgVal, cfgErr
 	}
 
+	f := &Factory{
+		IOStreams: streams,
+	}
+
 	clientFn := func() (*client.APIClient, error) {
 		clientOnce.Do(func() {
 			cfg, err := configFn()
@@ -71,14 +76,16 @@ func NewDefault() *Factory {
 				clientErr = err
 				return
 			}
-			clientVal = client.NewAPIClient(cfg.SecretID, cfg.SecretKey, cfg.Region, cfg.Endpoint)
+			region := cfg.Region
+			if f.RegionOverride != "" {
+				region = f.RegionOverride
+			}
+			clientVal = client.NewAPIClient(cfg.SecretID, cfg.SecretKey, region, cfg.Endpoint)
 		})
 		return clientVal, clientErr
 	}
 
-	return &Factory{
-		Config:    configFn,
-		CLSClient: clientFn,
-		IOStreams:  streams,
-	}
+	f.Config = configFn
+	f.CLSClient = clientFn
+	return f
 }

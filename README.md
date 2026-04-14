@@ -100,9 +100,17 @@ cls-cli (命令行工具)
 
 ## AI Agent Skill
 
-仓库根目录的 [SKILL.md](./SKILL.md) 是面向 AI Agent 的完整使用文档。将它加载到你的 AI 编程工具（Claude Code / Cursor / CodeBuddy 等）中，AI 就能自动安装、配置和使用 cls-cli 完成各种 CLS 操作。
+在你的 AI 编程工具（Claude Code / Cursor / CodeBuddy 等）中直接说：
 
-也可以从 [ClawHub](https://clawhub.ai) 搜索 `cls-cli` 一键安装此 Skill。
+> 请帮我安装 cls-cli skill：https://clawhub.ai/skills/cls-cli
+
+AI 会自动下载 Skill 并指导你完成安装和配置。
+
+也可以手动安装：
+
+```bash
+clawhub install cls-cli
+```
 
 ## License
 

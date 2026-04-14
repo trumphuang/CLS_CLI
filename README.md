@@ -14,6 +14,12 @@ go build -o cls-cli .
 sudo mv cls-cli /usr/local/bin/
 ```
 
+### 升级到最新版
+
+```bash
+cls-cli upgrade
+```
+
 ### 初始化配置
 
 ```bash
@@ -67,9 +73,11 @@ cls-cli machinegroup +status --group-id xxx
 | `alarm` | - | `+list` `+history` `+create` `+delete` `+notices` | 告警策略管理 |
 | `machinegroup` | `mg` | `+list` `+create` `+delete` `+info` `+status` | 机器组管理 |
 | `collector` | `col` | `+list` `+create` `+delete` `+info` `+guide` | 采集配置管理 |
+| `dashboard` | `dash` | `+list` `+info` `+create` `+update` `+delete` | 仪表盘管理 |
 | `loglistener` | `ll` | `+install` `+init` `+start` `+stop` `+restart` `+status` `+uninstall` `+check` | LogListener 管理 |
 | `config` | - | `init` `show` | 配置管理 |
 | `api` | - | `<Action>` | 通用 API 调用（支持所有 CLS API 3.0） |
+| `upgrade` | - | - | 自动升级到最新版 |
 
 ## 架构设计
 
@@ -88,6 +96,11 @@ cls-cli (命令行工具)
 - **灵活时间解析**：支持 `15 minutes ago`、`today`、`2024-01-01` 等多种格式
 - **多输出格式**：`--format json|pretty|table|csv`
 - **Dry-run 模式**：`--dry-run` 预览请求，不实际执行
+- **全局 Region 切换**：`--region ap-beijing` 任何命令都可以临时切换地域
+
+## AI Agent Skill
+
+仓库根目录的 [Skill.md](./Skill.md) 是面向 AI Agent 的完整使用文档。将它加载到你的 AI 编程工具（Claude Code / Cursor / CodeBuddy 等）中，AI 就能自动安装、配置和使用 cls-cli 完成各种 CLS 操作。
 
 ## License
 

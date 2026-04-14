@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"runtime"
 
 	"github.com/spf13/cobra"
 	"github.com/tencentcloud/cls-cli/cmd/api"
@@ -56,6 +57,7 @@ func Execute() int {
 	dashboard.RegisterShortcuts(rootCmd, f)
 
 	rootCmd.AddCommand(newVersionCmd())
+	rootCmd.AddCommand(newUpgradeCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintf(os.Stderr, "Error: %s\n", err)
@@ -69,7 +71,7 @@ func newVersionCmd() *cobra.Command {
 		Use:   "version",
 		Short: "显示版本信息",
 		Run: func(cmd *cobra.Command, args []string) {
-			fmt.Println("cls-cli version 0.1.0")
+			fmt.Printf("cls-cli version %s (%s/%s)\n", Version, runtime.GOOS, runtime.GOARCH)
 		},
 	}
 }
